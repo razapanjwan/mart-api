@@ -1,0 +1,218 @@
+name: Deploy to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Log in to Docker Hub
+        run: |
+          echo ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }} | docker login -u ${{ secrets.DOCKER_HUB_USERNAME }} --password-stdin
+
+      # Build and push the user service Docker image
+      - name: Build and push User Service Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/userservice:latest ./user-service
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/userservice:latest
+
+      # Build and push the product service Docker image
+      - name: Build and push Product Service Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/productservice:latest ./product-service
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/productservice:latest
+
+      # Build and push the order service Docker image
+      - name: Build and push Order Service Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/orderservice:latest ./order-service
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/orderservice:latest
+
+      # Build and push the inventory service Docker image
+      - name: Build and push Inventory Service Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/inventoryservice:latest ./inventory-service
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/inventoryservice:latest
+
+      # Build and push the notification service Docker image
+      - name: Build and push Notification Service Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/notificationservice:latest ./notification-service
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/notificationservice:latest
+        
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Deploy the user service to Azure Container Apps
+      - name: Deploy User Service to Azure Container Apps
+        run: |
+          az containerapp create \
+            --name service1 \
+            --resource-group myresourcegroup \
+            --environment mycontainerappenv \
+            --image ${{ secrets.DOCKER_HUB_USERNAME }}/userservice:latest \
+            --target-port 8003 \
+            --ingress 'external' \
+            --env-vars \
+              USER_SERVICE_DATABASE_URL=${{ secrets.USER_SERVICE_DATABASE_URL }} \
+              SECRET_KEY=${{ secrets.SECRET_KEY }} \
+              ALGORITHM=${{ secrets.ALGORITHM }} \
+              ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }} \
+              REFRESH_TOKEN_EXPIRE_MINUTES=${{ secrets.REFRESH_TOKEN_EXPIRE_MINUTES }} \
+              JWT_REFRESH_SECRET_KEY=${{ secrets.JWT_REFRESH_SECRET_KEY }} \
+              USER_SERVICE_KAFKA_PRODUCER_TOPIC=${{ secrets.USER_SERVICE_KAFKA_PRODUCER_TOPIC }} \
+              USER_SERVICE_KAFKA_GROUP_ID=${{ secrets.USER_SERVICE_KAFKA_GROUP_ID }} \
+              KAFKA_BOOTSTRAP_SERVER=${{ secrets.KAFKA_BOOTSTRAP_SERVER }} \
+              PRODUCT_SERVICE_URL=${{ secrets.PRODUCT_SERVICE_URL }} \
+              PAYMENT_SERVICE_URL=${{ secrets.PAYMENT_SERVICE_URL }} \
+              ORDER_SERVICE_URL=${{ secrets.ORDER_SERVICE_URL }} \
+              INVENTORY_SERVICE_URL=${{ secrets.INVENTORY_SERVICE_URL }} \
+              NOTIFICATION_SERVICE_URL=${{ secrets.NOTIFICATION_SERVICE_URL }} \
+            
+      # Configure CORS for the user service
+      - name: Configure CORS for User Service
+        run: |
+          az containerapp ingress cors enable \
+            --name service1 \
+            --resource-group myresourcegroup \
+            --allowed-origins ${{ secrets.USER_SERVICE_URL }} ${{ secrets.PRODUCT_SERVICE_URL }} ${{ secrets.ORDER_SERVICE_URL }} ${{ secrets.INVENTORY_SERVICE_URL }} 
+
+      # Deploy the product service to Azure Container Apps
+      - name: Deploy Product Service to Azure Container Apps
+        run: |
+          az containerapp create \
+            --name service2 \
+            --resource-group myresourcegroup \
+            --environment mycontainerappenv \
+            --image ${{ secrets.DOCKER_HUB_USERNAME }}/productservice:latest \
+            --target-port 8004 \
+            --ingress 'external' \
+            --env-vars \
+              PRODUCT_SERVICE_DATABASE_URL=${{   secrets.PRODUCT_SERVICE_DATABASE_URL  }} \
+              USER_SERVICE_URL=${{   secrets.USER_SERVICE_URL  }} \
+              INVENTORY_SERVICE_URL=${{  secrets.INVENTORY_SERVICE_URL  }} 
+
+      # Configure CORS for the user service
+      - name: Configure CORS for Product Service
+        run: |
+          az containerapp ingress cors enable \
+            --name service2 \
+            --resource-group myresourcegroup \
+            --allowed-origins ${{ secrets.ORDER_SERVICE_URL }} ${{ secrets.INVENTORY_SERVICE_URL }} 
+
+      # Deploy the order service to Azure Container Apps
+      - name: Deploy Order Service to Azure Container Apps
+        run: |
+          az containerapp create \
+            --name service3 \
+            --resource-group myresourcegroup \
+            --environment mycontainerappenv \
+            --image ${{ secrets.DOCKER_HUB_USERNAME }}/orderservice:latest \
+            --target-port 8005 \
+            --ingress 'external' \
+            --env-vars \
+              ORDER_SERVICE_DATABASE_URL=${{ secrets.ORDER_SERVICE_DATABASE_URL }} \
+              KAFKA_BOOTSTRAP_SERVER=${{ secrets.KAFKA_BOOTSTRAP_SERVER }} \
+              ORDER_SERVICE_KAFKA_ORDER_TOPIC=${{ secrets.ORDER_SERVICE_KAFKA_ORDER_TOPIC }} \
+              USER_SERVICE_URL=${{ secrets.USER_SERVICE_URL }} \
+              PRODUCT_SERVICE_URL=${{ secrets.PRODUCT_SERVICE_URL }} \
+              INVENTORY_SERVICE_URL=${{ secrets.INVENTORY_SERVICE_URL }} \
+            
+      # Configure CORS for the order service
+      - name: Configure CORS for Order Service
+        run: |
+          az containerapp ingress cors enable \
+            --name service3 \
+            --resource-group myresourcegroup \
+            --allowed-origins ${{ secrets.USER_SERVICE_URL }} ${{ secrets.INVENTORY_SERVICE_URL }} 
+              
+      # Deploy the inventory service to Azure Container Apps
+      - name: Deploy Inventory Service to Azure Container Apps
+        run: |
+          az containerapp create \
+            --name service4 \
+            --resource-group myresourcegroup \
+            --environment mycontainerappenv \
+            --image ${{ secrets.DOCKER_HUB_USERNAME }}/inventoryservice:latest \
+            --target-port 8006 \
+            --ingress 'external' \
+            --env-vars \
+              INVENTORY_SERVICE_DATABASE_URL=${{ secrets.INVENTORY_SERVICE_DATABASE_URL }} \
+              USER_SERVICE_URL=${{ secrets.USER_SERVICE_URL }} \
+              PRODUCT_SERVICE_URL=${{ secrets.PRODUCT_SERVICE_URL }} \
+              ORDER_SERVICE_URL=${{ secrets.ORDER_SERVICE_URL }} 
+      
+      # Configure CORS for the inventory service
+      - name: Configure CORS for Inventory Service
+        run: |
+          az containerapp ingress cors enable \
+            --name service4 \
+            --resource-group myresourcegroup \
+            --allowed-origins ${{ secrets.USER_SERVICE_URL }} ${{ secrets.PRODUCT_SERVICE_URL }} ${{ secrets.ORDER_SERVICE_URL }} 
+
+      # Deploy the notification service to Azure Container Apps
+      - name: Deploy Notification Service to Azure Container Apps
+        run : |
+          az containerapp create \
+            --name service5 \
+            --resource-group myresourcegroup \
+            --environment mycontainerappenv \
+            --image ${{ secrets.DOCKER_HUB_USERNAME }}/notificationservice:latest \
+            --target-port 8007 \
+            --ingress 'external' \
+            --env-vars \
+              NOTIFICATION_SERVICE_KAFKA_CONSUMER_TOPIC=${{ secrets.NOTIFICATION_SERVICE_KAFKA_CONSUMER_TOPIC }} \
+              NOTIFICATION_SERVICE_KAFKA_GROUP_ID=${{ secrets.NOTIFICATION_SERVICE_KAFKA_GROUP_ID }} \
+              NOTIFICATION_SERVICE_KAFKA_ORDER_TOPIC=${{ secrets.NOTIFICATION_SERVICE_KAFKA_ORDER_TOPIC }} \
+              NOTIFICATION_SERVICE_KAFKA_ORDER_GROUP_ID=${{ secrets.NOTIFICATION_SERVICE_KAFKA_ORDER_GROUP_ID }} \
+              KAFKA_BOOTSTRAP_SERVER=${{ secrets.KAFKA_BOOTSTRAP_SERVER }} \
+              SMTP_SERVER=${{ secrets.SMTP_SERVER }} \
+              SMTP_PORT=${{ secrets.SMTP_PORT }} \
+              SMTP_USERNAME=${{ secrets.SMTP_USERNAME }} \
+              SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }} \
+              SMTP_EMAIL=${{ secrets.SMTP_EMAIL }} 
+
+      # Configure CORS for the inventory service
+      - name: Configure CORS for Notification Service
+        run: |
+          az containerapp ingress cors enable \
+            --name service5 \
+            --resource-group myresourcegroup \
+            --allowed-origins ${{ secrets.USER_SERVICE_URL }} ${{ secrets.PRODUCT_SERVICE_URL }} ${{ secrets.ORDER_SERVICE_URL }} ${{ secrets.NOTIFICATION_SERVICE_URL }}
+            
+      # Deploy the payment service to Azure Container Apps
+      - name: Deploy Payment Service to Azure Container Apps
+        run: |
+          az containerapp create \
+            --name service6 \
+            --resource-group myresourcegroup \
+            --environment mycontainerappenv \
+            --image ${{ secrets.DOCKER_HUB_USERNAME }}/paymentservice:latest \
+            --target-port 8008 \
+            --ingress 'external' \
+            --env-vars \
+              USER_SERVICE_URL=${{ secrets.USER_SERVICE_URL }} \
+              PRODUCT_SERVICE_URL=${{ secrets.PRODUCT_SERVICE_URL }} \
+              ORDER_SERVICE_URL=${{ secrets.ORDER_SERVICE_URL }} \
+              WB_SECRET_KEY=${{ secrets.WB_SECRET_KEY }} \
+              SECRET_KEY_STRIPE=${{ secrets.SECRET_KEY_STRIPE }} 
+        
+      # Configure CORS for the inventory service
+      - name: Configure CORS for Payment Service
+        run: |
+          az containerapp ingress cors enable \
+            --name service6 \
+            --resource-group myresourcegroup \
+            --allowed-origins ${{ secrets.USER_SERVICE_URL }} ${{ secrets.PRODUCT_SERVICE_URL }} ${{ secrets.ORDER_SERVICE_URL }} 
